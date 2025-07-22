@@ -1,0 +1,12 @@
+{
+  "username": "art-shutter",
+  "gitAuthor": "Renovate Bot <bot@renovateapp.com>",
+  "onboarding": true,
+  "platform": "github",
+  "repositories": [
+    "art-shutter/outline-cli"
+  ],
+  "extends": [
+    "config:best-practices"
+  ]
+}

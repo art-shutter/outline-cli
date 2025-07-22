@@ -25,10 +25,7 @@
         packages.outline-cli = pkgs.buildGoModule {
           pname = "outline-cli";
           inherit version;
-          src = builtins.path {
-            path = ./src;
-            name = "source";
-          };
+          src = ./.;
 
           vendorHash = "sha256-0sCb33khZSpMxmUnvO7ASagONP3ytjAGYMH/2aAJDxA=";
 

@@ -1,0 +1,38 @@
+name: 'Release'
+permissions:
+  contents: 'write'
+  issues: 'write'
+  pull-requests: 'write'
+'on':
+  push:
+    branches:
+      - 'main'
+    paths-ignore:
+      - '.github/**'
+      - '.gitignore'
+      - '.releaserc.json'
+      - 'justfile'
+      - 'LICENSE'
+      - 'README.md'
+      - 'renovate-config.json'
+      - 'renovate.json'
+concurrency:
+  group: 'release'
+defaults:
+  run:
+    shell: 'bash'
+jobs:
+  semantic_release:
+    name: 'Semantic Release'
+    runs-on: 'ubuntu-latest'
+    steps:
+      - name: 'Checkout'
+        uses: 'actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8' # v5.0.0
+      - name: 'Setup Bun'
+        uses: 'oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76' # v2.0.2
+        with:
+          bun-version: 'latest'
+      - name: 'Release'
+        run: |
+            bun -e "const config = $(cat .releaserc.json); const plugins = config.plugins.map(p => Array.isArray(p) ? p[0] : p); console.log(plugins.join(' '))" | xargs bun install
+            GH_TOKEN=${{ secrets.SEMANTIC_RELEASE_TOKEN }} bunx semantic-release

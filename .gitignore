@@ -14,11 +14,26 @@
 # Go workspace file
 go.work
 
+# Go build artifacts
+outline-cli
+build/
+dist/
+bin/
+
+# Exception: Include cmd/outline-cli/ directory (source code, not binary)
+!cmd/outline-cli/
+
+# Nix build artifacts
+result/
+result-*
+result
+
 # IDE files
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
 # OS generated files
 .DS_Store
@@ -29,7 +44,23 @@ go.work
 ehthumbs.db
 Thumbs.db
 
-# builds
-outline-cli
-result/
-build/
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Coverage reports
+coverage.txt
+coverage.html
+*.cover
+
+# Go module cache (if vendored)
+vendor/
+
+# Pre-commit cache
+.pre-commit-cache/

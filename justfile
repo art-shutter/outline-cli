@@ -1,31 +1,49 @@
-# Default recipe to run when no arguments are provided
+set shell := ["bash", "-euo", "pipefail", "-c"]
+set dotenv-load := true
+set positional-arguments := true
+
+os_default := lowercase(shell("uname -s"))
+arch_default := shell("uname -m")
+
 default:
+    @just defaults
+    @echo ""
     @just --list
 
-# Build with version (usage: just build-version v1.0.0), default is dev
-build version="dev":
-    go build -C src -ldflags="-X main.Version={{version}} -s -w" -o build/outline-cli
+defaults:
+    @echo "OS: {{ os_default }}"
+    @echo "Arch: {{ arch_default }}"
+    @echo "{{ shell("go version") }}"
 
-# Clean build artifacts
+build version="development" os=os_default arch=arch_default: defaults
+    GOOS="{{ os }}" GOARCH="{{ arch }}" \
+      go build -ldflags="-X main.Version={{version}} -s -w" \
+      -trimpath -o "build/outline-cli-{{ os }}-{{ arch }}" ./cmd/outline-cli
+
+build-all version="development":
+    just build {{ version }} darwin arm64 \
+      build {{ version }} darwin amd64 \
+      build {{ version }} linux arm64 \
+      build {{ version }} linux amd64
+
+publish-assets release_id:
+    gh release upload {{ release_id }} build/outline-cli-* --clobber
+
 clean:
     rm -f outline-cli
+    rm -rf build/
 
-# Run tests
 test:
-	go test -C src -v ./...
+    go test -v ./...
 
-# Run mod tidy and mod verify
 mod:
-    go mod tidy -C src
-    go mod verify -C src
+    go mod tidy
+    go mod verify
 
-# Format code
 fmt:
-    go fmt -C src ./...
+    go fmt ./...
 
-# Run linter
 lint:
-    (cd src && golangci-lint run ./...)
+    golangci-lint run ./...
 
-# Build and test
 all: clean lint build test
