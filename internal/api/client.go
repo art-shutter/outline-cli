@@ -1,12 +1,17 @@
-package main
+package api
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/goccy/go-json"
@@ -26,15 +31,31 @@ type APIClient struct {
 	client *http.Client
 }
 
-// NewAPIClient creates a new API client
-func NewAPIClient() *APIClient {
+// NewAPIClient creates a new API client with certificate verification
+func NewAPIClient(certSha256 string) *APIClient {
 	return &APIClient{
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
-				// we need to ignore tls as outline servers use self-signed ones
 				TLSClientConfig: &tls.Config{
 					InsecureSkipVerify: true,
+					VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+						if len(rawCerts) == 0 {
+							slog.Error("no certificates provided")
+							return fmt.Errorf("no certificates provided")
+						}
+
+						// Calculate SHA256 of the first certificate
+						hash := sha256.Sum256(rawCerts[0])
+						calculatedSha256 := strings.ToUpper(hex.EncodeToString(hash[:]))
+
+						if calculatedSha256 != strings.ToUpper(certSha256) {
+							slog.Error("certificate SHA256 mismatch", "expected", strings.ToUpper(certSha256), "got", calculatedSha256)
+							return fmt.Errorf("certificate SHA256 mismatch")
+						}
+
+						return nil
+					},
 				},
 			},
 		},
