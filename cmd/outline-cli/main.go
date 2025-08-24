@@ -30,9 +30,9 @@ func (Args) Epilogue() string {
 	return `Examples:
   outline-cli servers add myserver https://example.com/secret abc123def456...
   outline-cli servers add-json myserver '{"apiUrl":"https://example.com/secret","certSha256":"abc123def456..."}'
-  outline-cli keys create -s myserver -k mykey -l 1GB
-  outline-cli keys list -s myserver
-  outline-cli servers metrics -s myserver
+  outline-cli keys create myserver -k mykey -l 1GB
+  outline-cli keys list myserver
+  outline-cli servers metrics myserver
 
 For more information, visit: https://github.com/art-shutter/outline-cli`
 }
@@ -80,30 +80,26 @@ type KeysCmd struct {
 	Edit   *EditKeyCmd   `arg:"subcommand:edit" help:"Edit an existing access key"`
 }
 
-type ServerName struct {
-	ServerName string `arg:"-s,--server-name,required" help:"Server name"`
-}
-
 type ListKeysCmd struct {
-	ServerName
+	ServerName string `arg:"positional,required" help:"Server name"`
 }
 
 type CreateKeyCmd struct {
-	ServerName
-	Name      string           `arg:"-k,--key-name" help:"Access key name"`
-	Method    EncryptionMethod `arg:"-m,--method" default:"aes-192-gcm" help:"Encryption method"`
-	Port      Port             `arg:"-p,--port" help:"Port number"`
-	DataLimit DataSize         `arg:"-l,--data-limit" help:"Data limit (e.g., '1GB', '500MB', '2TB')"`
+	ServerName string           `arg:"positional,required" help:"Server name"`
+	Name       string           `arg:"-k,--key-name" help:"Access key name"`
+	Method     EncryptionMethod `arg:"-m,--method" default:"aes-192-gcm" help:"Encryption method"`
+	Port       Port             `arg:"-p,--port" help:"Port number"`
+	DataLimit  DataSize         `arg:"-l,--data-limit" help:"Data limit (e.g., '1GB', '500MB', '2TB')"`
 }
 
 type DeleteKeyCmd struct {
-	ServerName
-	KeyID   string `arg:"-k,--key-id" help:"Access key ID (use this to delete by ID)"`
-	KeyName string `arg:"-n,--key-name" help:"Access key name (use this to delete by name)"`
+	ServerName string `arg:"positional,required" help:"Server name"`
+	KeyID      string `arg:"-k,--key-id" help:"Access key ID (use this to delete by ID)"`
+	KeyName    string `arg:"-n,--key-name" help:"Access key name (use this to delete by name)"`
 }
 
 type EditKeyCmd struct {
-	ServerName
+	ServerName  string   `arg:"positional,required" help:"Server name"`
 	KeyID       string   `arg:"-k,--key-id" help:"Access key ID (use this to edit by ID)"`
 	KeyName     string   `arg:"-n,--key-name" help:"Access key name (use this to edit by name)"`
 	NewName     string   `arg:"--new-name" help:"New name for the access key"`
@@ -112,7 +108,7 @@ type EditKeyCmd struct {
 }
 
 type MetricsCmd struct {
-	ServerName
+	ServerName string `arg:"positional,required" help:"Server name"`
 }
 
 func main() {
@@ -169,7 +165,7 @@ func handleServersCommand(cmd *ServersCmd, configManager *config.ConfigManager) 
 	case cmd.Delete != nil:
 		return configManager.DeleteServer(cmd.Delete.Name)
 	case cmd.Metrics != nil:
-		return configManager.GetMetrics(cmd.Metrics.ServerName.ServerName)
+		return configManager.GetMetrics(cmd.Metrics.ServerName)
 	default:
 		return fmt.Errorf("no subcommand specified")
 	}
@@ -178,16 +174,16 @@ func handleServersCommand(cmd *ServersCmd, configManager *config.ConfigManager) 
 func handleKeysCommand(cmd *KeysCmd, configManager *config.ConfigManager) error {
 	switch {
 	case cmd.List != nil:
-		return configManager.ListAccessKeys(cmd.List.ServerName.ServerName)
+		return configManager.ListAccessKeys(cmd.List.ServerName)
 	case cmd.Create != nil:
-		return configManager.CreateAccessKey(cmd.Create.ServerName.ServerName, cmd.Create.Name, cmd.Create.Method.Method, cmd.Create.Port.Number, cmd.Create.DataLimit.String())
+		return configManager.CreateAccessKey(cmd.Create.ServerName, cmd.Create.Name, cmd.Create.Method.Method, cmd.Create.Port.Number, cmd.Create.DataLimit.String())
 	case cmd.Delete != nil:
 		if cmd.Delete.KeyName != "" {
-			return configManager.DeleteAccessKeyByName(cmd.Delete.ServerName.ServerName, cmd.Delete.KeyName)
+			return configManager.DeleteAccessKeyByName(cmd.Delete.ServerName, cmd.Delete.KeyName)
 		}
-		return configManager.DeleteAccessKey(cmd.Delete.ServerName.ServerName, cmd.Delete.KeyID)
+		return configManager.DeleteAccessKey(cmd.Delete.ServerName, cmd.Delete.KeyID)
 	case cmd.Edit != nil:
-		return configManager.EditAccessKey(cmd.Edit.ServerName.ServerName, cmd.Edit.KeyID, cmd.Edit.KeyName, cmd.Edit.NewName, cmd.Edit.DataLimit.String(), cmd.Edit.RemoveLimit)
+		return configManager.EditAccessKey(cmd.Edit.ServerName, cmd.Edit.KeyID, cmd.Edit.KeyName, cmd.Edit.NewName, cmd.Edit.DataLimit.String(), cmd.Edit.RemoveLimit)
 	default:
 		return fmt.Errorf("no keys subcommand specified")
 	}

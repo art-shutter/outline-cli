@@ -193,7 +193,7 @@ func TestValidateArgs(t *testing.T) {
 			name: "valid args - keys command with list",
 			args: &Args{
 				Keys: &KeysCmd{
-					List: &ListKeysCmd{ServerName: ServerName{ServerName: "test"}},
+					List: &ListKeysCmd{ServerName: "test"},
 				},
 			},
 			wantErr: false,
@@ -203,7 +203,7 @@ func TestValidateArgs(t *testing.T) {
 			args: &Args{
 				Keys: &KeysCmd{
 					Delete: &DeleteKeyCmd{
-						ServerName: ServerName{ServerName: "test"},
+						ServerName: "test",
 						KeyID:      "key123",
 					},
 				},
@@ -215,7 +215,7 @@ func TestValidateArgs(t *testing.T) {
 			args: &Args{
 				Keys: &KeysCmd{
 					Delete: &DeleteKeyCmd{
-						ServerName: ServerName{ServerName: "test"},
+						ServerName: "test",
 						KeyName:    "test-key",
 					},
 				},
@@ -227,7 +227,7 @@ func TestValidateArgs(t *testing.T) {
 			args: &Args{
 				Keys: &KeysCmd{
 					Delete: &DeleteKeyCmd{
-						ServerName: ServerName{ServerName: "test"},
+						ServerName: "test",
 					},
 				},
 			},
@@ -238,7 +238,7 @@ func TestValidateArgs(t *testing.T) {
 			args: &Args{
 				Keys: &KeysCmd{
 					Edit: &EditKeyCmd{
-						ServerName: ServerName{ServerName: "test"},
+						ServerName: "test",
 						KeyID:      "key123",
 						NewName:    "new-name",
 					},
@@ -251,7 +251,7 @@ func TestValidateArgs(t *testing.T) {
 			args: &Args{
 				Keys: &KeysCmd{
 					Edit: &EditKeyCmd{
-						ServerName: ServerName{ServerName: "test"},
+						ServerName: "test",
 						KeyID:      "key123",
 						DataLimit:  DataSize{Bytes: 1024 * 1024 * 1024}, // 1GB
 					},
@@ -264,7 +264,7 @@ func TestValidateArgs(t *testing.T) {
 			args: &Args{
 				Keys: &KeysCmd{
 					Edit: &EditKeyCmd{
-						ServerName:  ServerName{ServerName: "test"},
+						ServerName:  "test",
 						KeyID:       "key123",
 						RemoveLimit: true,
 					},
@@ -277,7 +277,7 @@ func TestValidateArgs(t *testing.T) {
 			args: &Args{
 				Keys: &KeysCmd{
 					Edit: &EditKeyCmd{
-						ServerName: ServerName{ServerName: "test"},
+						ServerName: "test",
 					},
 				},
 			},
@@ -288,7 +288,7 @@ func TestValidateArgs(t *testing.T) {
 			args: &Args{
 				Keys: &KeysCmd{
 					Edit: &EditKeyCmd{
-						ServerName: ServerName{ServerName: "test"},
+						ServerName: "test",
 						KeyID:      "key123",
 					},
 				},
