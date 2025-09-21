@@ -26,6 +26,7 @@ bin/
 # Nix build artifacts
 result/
 result-*
+result
 
 # IDE files
 .vscode/
