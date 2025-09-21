@@ -9,9 +9,4 @@
   "extends": [
     "config:best-practices"
   ]
-    "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-    "prHourlyLimit": 0,
-    "nix": {
-        "enabled": true
-    }
 }

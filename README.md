@@ -1,7 +1,7 @@
 # Outline CLI
 
 A command-line interface for managing Outline servers. This CLI allows you to store and manage multiple Outline server configurations locally and perform basic operations on them.
-Inspired by https://github.com/JMCFTW/outline-cli/
+Inspired by https://github.com/JMCFTW/outline-cli/  
 Motivation: the official outline Electron app is unreliable.
 
 ## Installation
