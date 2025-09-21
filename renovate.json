@@ -1,12 +1,3 @@
 {
-  "username": "art-shutter",
-  "gitAuthor": "Renovate Bot <bot@renovateapp.com>",
-  "onboarding": true,
-  "platform": "github",
-  "repositories": [
-    "art-shutter/gcp-outline-tf"
-  ],
-  "extends": [
-    "config:best-practices"
-  ]
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json"
 }
