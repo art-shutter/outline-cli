@@ -1,6 +1,13 @@
 # 1.0.0 (2025-09-22)
 
 
+### Features
+
+* improve initial implementation and add add ci routines ([dd23fe2](https://github.com/art-shutter/outline-cli/commit/dd23fe2444636f7efbbd5989ff3a264b6794d3b7))
+
+# 1.0.0 (2025-09-22)
+
+
 ### Bug Fixes
 
 * cleanup git ([45236a2](https://github.com/art-shutter/outline-cli/commit/45236a27ce102ba1c47e14886b6753b3ec824470))
