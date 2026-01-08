@@ -6,7 +6,7 @@ require (
 	github.com/alexflint/go-arg v1.6.0
 	github.com/dustin/go-humanize v1.0.1
 	github.com/goccy/go-json v0.10.5
-	github.com/goccy/go-yaml v1.18.0
+	github.com/goccy/go-yaml v1.19.2
 )
 
 require github.com/alexflint/go-scalar v1.2.0 // indirect
