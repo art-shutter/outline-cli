@@ -28,11 +28,12 @@ jobs:
     steps:
       - name: 'Checkout'
         uses: 'actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd' # v6.0.2
-      - name: 'Setup Bun'
-        uses: 'oven-sh/setup-bun@3d267786b128fe76c2f16a390aa2448b815359f3' # v2.1.2
+      - name: 'Setup Node'
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
-          bun-version: 'latest'
+          node-version: lts/*
       - name: 'Release'
+        env:
+          GH_TOKEN: '${{ secrets.SEMANTIC_RELEASE_TOKEN }}'
         run: |
-            bun -e "const config = $(cat .releaserc.json); const plugins = config.plugins.map(p => Array.isArray(p) ? p[0] : p); console.log(plugins.join(' '))" | xargs bun install
-            GH_TOKEN=${{ secrets.SEMANTIC_RELEASE_TOKEN }} bunx semantic-release
+            npx semantic-release
