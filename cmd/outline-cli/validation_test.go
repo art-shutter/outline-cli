@@ -8,7 +8,7 @@ func TestDataSize_UnmarshalText(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
-		expected int64
+		expected DataSize
 		hasError bool
 	}{
 		{"empty string", "", 0, false},
@@ -47,8 +47,8 @@ func TestDataSize_UnmarshalText(t *testing.T) {
 				if err != nil {
 					t.Errorf("DataSize.UnmarshalText(%q) unexpected error: %v", tt.input, err)
 				}
-				if ds.Bytes != tt.expected {
-					t.Errorf("DataSize.UnmarshalText(%q) = %d, want %d", tt.input, ds.Bytes, tt.expected)
+				if ds != tt.expected {
+					t.Errorf("DataSize.UnmarshalText(%q) = %d, want %d", tt.input, ds, tt.expected)
 				}
 			}
 		})
@@ -59,7 +59,7 @@ func TestServerURL_UnmarshalText(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
-		expected string
+		expected ServerURL
 		hasError bool
 	}{
 		{"valid https URL", "https://example.com/secret", "https://example.com/secret", false},
@@ -89,8 +89,8 @@ func TestServerURL_UnmarshalText(t *testing.T) {
 				if err != nil {
 					t.Errorf("ServerURL.UnmarshalText(%q) unexpected error: %v", tt.input, err)
 				}
-				if su.URL != tt.expected {
-					t.Errorf("ServerURL.UnmarshalText(%q) = %q, want %q", tt.input, su.URL, tt.expected)
+				if su != tt.expected {
+					t.Errorf("ServerURL.UnmarshalText(%q) = %q, want %q", tt.input, su, tt.expected)
 				}
 			}
 		})
@@ -101,7 +101,7 @@ func TestCertSHA256_UnmarshalText(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
-		expected string
+		expected CertSHA256
 		hasError bool
 	}{
 		{"valid hex string", "1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF", "1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF", false},
@@ -128,8 +128,8 @@ func TestCertSHA256_UnmarshalText(t *testing.T) {
 				if err != nil {
 					t.Errorf("CertSHA256.UnmarshalText(%q) unexpected error: %v", tt.input, err)
 				}
-				if cs.Hash != tt.expected {
-					t.Errorf("CertSHA256.UnmarshalText(%q) = %q, want %q", tt.input, cs.Hash, tt.expected)
+				if cs != tt.expected {
+					t.Errorf("CertSHA256.UnmarshalText(%q) = %q, want %q", tt.input, cs, tt.expected)
 				}
 			}
 		})
@@ -140,7 +140,7 @@ func TestPort_UnmarshalText(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
-		expected int
+		expected Port
 		hasError bool
 	}{
 		{"valid port 1", "1", 1, false},
@@ -170,8 +170,43 @@ func TestPort_UnmarshalText(t *testing.T) {
 				if err != nil {
 					t.Errorf("Port.UnmarshalText(%q) unexpected error: %v", tt.input, err)
 				}
-				if p.Number != tt.expected {
-					t.Errorf("Port.UnmarshalText(%q) = %d, want %d", tt.input, p.Number, tt.expected)
+				if p != tt.expected {
+					t.Errorf("Port.UnmarshalText(%q) = %d, want %d", tt.input, p, tt.expected)
+				}
+			}
+		})
+	}
+}
+
+func TestEncryptionMethod_UnmarshalText(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected EncryptionMethod
+		hasError bool
+	}{
+		{"empty defaults to aes-192-gcm", "", MethodAES192GCM, false},
+		{"aes-256-gcm", "aes-256-gcm", MethodAES256GCM, false},
+		{"aes-192-gcm", "aes-192-gcm", MethodAES192GCM, false},
+		{"aes-128-gcm", "aes-128-gcm", MethodAES128GCM, false},
+		{"chacha20-poly1305", "chacha20-poly1305", MethodChaCha20Poly1305, false},
+		{"unsupported cipher", "rc4-md5", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var m EncryptionMethod
+			err := m.UnmarshalText([]byte(tt.input))
+			if tt.hasError {
+				if err == nil {
+					t.Errorf("EncryptionMethod.UnmarshalText(%q) expected error, got nil", tt.input)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("EncryptionMethod.UnmarshalText(%q) unexpected error: %v", tt.input, err)
+				}
+				if m != tt.expected {
+					t.Errorf("EncryptionMethod.UnmarshalText(%q) = %q, want %q", tt.input, m, tt.expected)
 				}
 			}
 		})
@@ -253,7 +288,7 @@ func TestValidateArgs(t *testing.T) {
 					Edit: &EditKeyCmd{
 						ServerName: "test",
 						KeyID:      "key123",
-						DataLimit:  DataSize{Bytes: 1024 * 1024 * 1024}, // 1GB
+						DataLimit:  DataSize(1024 * 1024 * 1024),
 					},
 				},
 			},
@@ -273,6 +308,20 @@ func TestValidateArgs(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "invalid args - edit with both data limit and remove limit",
+			args: &Args{
+				Keys: &KeysCmd{
+					Edit: &EditKeyCmd{
+						ServerName:  "test",
+						KeyID:       "key123",
+						DataLimit:   DataSize(1024),
+						RemoveLimit: true,
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
 			name: "invalid args - edit without key ID or name",
 			args: &Args{
 				Keys: &KeysCmd{
@@ -290,6 +339,17 @@ func TestValidateArgs(t *testing.T) {
 					Edit: &EditKeyCmd{
 						ServerName: "test",
 						KeyID:      "key123",
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid args - update server without url",
+			args: &Args{
+				Servers: &ServersCmd{
+					Update: &UpdateCmd{
+						Name: "test",
 					},
 				},
 			},

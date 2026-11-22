@@ -1,39 +1,55 @@
-name: 'Release'
-permissions:
-  contents: 'write'
-  issues: 'write'
-  pull-requests: 'write'
-'on':
+---
+name: Release
+
+"on":
   push:
     branches:
-      - 'main'
-    paths-ignore:
-      - '.github/**'
-      - '.gitignore'
-      - '.releaserc.json'
-      - 'justfile'
-      - 'LICENSE'
-      - 'README.md'
-      - 'renovate-config.json'
-      - 'renovate.json'
+      - main
+  workflow_dispatch: {}
+
 concurrency:
-  group: 'release'
-defaults:
-  run:
-    shell: 'bash'
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
-  semantic_release:
-    name: 'Semantic Release'
-    runs-on: 'ubuntu-latest'
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-24.04
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - name: 'Checkout'
-        uses: 'actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd' # v6.0.2
-      - name: 'Setup Node'
-        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
-          node-version: lts/*
-      - name: 'Release'
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.SEMANTIC_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish-assets:
+    name: Build & Publish Release Assets
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      - name: Magic Nix Cache
+        uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+
+      - name: Run GoReleaser
         env:
-          GH_TOKEN: '${{ secrets.SEMANTIC_RELEASE_TOKEN }}'
-        run: |
-            npx semantic-release
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: nix run .#release

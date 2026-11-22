@@ -1,11 +1,22 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
+	"log/slog"
+	"maps"
 	"os"
+	"os/signal"
+	"slices"
+	"strings"
+	"syscall"
 
 	"github.com/alexflint/go-arg"
+	"github.com/art-shutter/outline-cli/internal/api"
 	"github.com/art-shutter/outline-cli/internal/config"
+	"github.com/dustin/go-humanize"
 )
 
 var Version = "dev"
@@ -28,9 +39,9 @@ func (Args) Description() string {
 
 func (Args) Epilogue() string {
 	return `Examples:
-  outline-cli servers add myserver https://example.com/secret abc123def456...
-  outline-cli servers add-json myserver '{"apiUrl":"https://example.com/secret","certSha256":"abc123def456..."}'
-  outline-cli keys create myserver -k mykey -l 1GB
+  outline-cli servers add myserver https://example.com/secret --cert-sha256 34B3C8EB1C6EC9B5335556D7E8DC73A30152D27C66B054BAB8ACF5D11AE0C810
+  outline-cli servers add-json myserver '{"apiUrl":"https://example.com/secret","certSha256":"34B3C8EB1C6EC9B5335556D7E8DC73A30152D27C66B054BAB8ACF5D11AE0C810"}'
+  outline-cli keys create myserver -k "My Key" -l 1GB
   outline-cli keys list myserver
   outline-cli servers metrics myserver
 
@@ -115,76 +126,325 @@ func main() {
 	var args Args
 	parser := arg.MustParse(&args)
 
-	config.InitLogger(args.Verbosity)
+	slog.SetDefault(newLogger(args.Verbosity))
 
 	if err := validateArgs(&args); err != nil {
 		parser.Fail(err.Error())
 	}
 
-	configManager, err := config.NewConfigManager()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error initializing config: %v\n", err)
+	if args.Version == nil && args.Servers == nil && args.Keys == nil && args.PrintConfig == nil {
+		parser.WriteHelp(os.Stdout)
+		return
+	}
+
+	if err := run(context.Background(), &args, os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
 
+func run(parentCtx context.Context, args *Args, out io.Writer) error {
+	ctx, stop := signal.NotifyContext(parentCtx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if args.Version != nil {
+		_, err := fmt.Fprintf(out, "outline-cli version %s\n", Version)
+		return err
+	}
+
+	store, err := config.LoadDefault()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	return execute(ctx, args, store, out)
+}
+
+func execute(ctx context.Context, args *Args, store *config.Store, out io.Writer) error {
 	switch {
-	case args.Version != nil:
-		fmt.Printf("outline-cli version %s\n", Version)
 	case args.Servers != nil:
-		if err := handleServersCommand(args.Servers, configManager); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+		return handleServersCommand(ctx, args.Servers, store, out)
 	case args.Keys != nil:
-		if err := handleKeysCommand(args.Keys, configManager); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+		return handleKeysCommand(ctx, args.Keys, store, out)
 	case args.PrintConfig != nil:
-		if err := configManager.PrintConfig(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+		data, err := store.MarshalYAML()
+		if err != nil {
+			return err
 		}
+		_, err = fmt.Fprintln(out, string(data))
+		return err
 	default:
-		parser.WriteHelp(os.Stdout)
+		return nil
 	}
 }
 
-func handleServersCommand(cmd *ServersCmd, configManager *config.ConfigManager) error {
+func handleServersCommand(ctx context.Context, cmd *ServersCmd, store *config.Store, out io.Writer) error {
 	switch {
 	case cmd.List != nil:
-		return configManager.ListServers()
+		return listServers(store, out)
 	case cmd.Add != nil:
-		return configManager.AddServer(cmd.Add.Name, cmd.Add.URL.URL, cmd.Add.CertSha256.Hash)
+		if err := store.Add(cmd.Add.Name, string(cmd.Add.URL), string(cmd.Add.CertSha256)); err != nil {
+			return err
+		}
+		slog.Info("server added successfully", slog.String("name", cmd.Add.Name))
+		return nil
 	case cmd.AddJSON != nil:
-		return configManager.AddServerFromJSON(cmd.AddJSON.Name, cmd.AddJSON.JSON)
+		if err := store.AddFromJSON(cmd.AddJSON.Name, cmd.AddJSON.JSON); err != nil {
+			return err
+		}
+		slog.Info("server added successfully", slog.String("name", cmd.AddJSON.Name))
+		return nil
 	case cmd.Get != nil:
-		return configManager.GetServer(cmd.Get.Name)
+		return getServer(ctx, store, cmd.Get.Name, out)
 	case cmd.Update != nil:
-		return configManager.UpdateServer(cmd.Update.Name, cmd.Update.URL.URL)
+		return store.UpdateURL(cmd.Update.Name, string(cmd.Update.URL))
 	case cmd.Delete != nil:
-		return configManager.DeleteServer(cmd.Delete.Name)
+		return store.Delete(cmd.Delete.Name)
 	case cmd.Metrics != nil:
-		return configManager.GetMetrics(cmd.Metrics.ServerName)
+		return getMetrics(ctx, store, cmd.Metrics.ServerName, out)
 	default:
-		return fmt.Errorf("no subcommand specified")
+		return errors.New("no servers subcommand specified")
 	}
 }
 
-func handleKeysCommand(cmd *KeysCmd, configManager *config.ConfigManager) error {
+func handleKeysCommand(ctx context.Context, cmd *KeysCmd, store *config.Store, out io.Writer) error {
 	switch {
 	case cmd.List != nil:
-		return configManager.ListAccessKeys(cmd.List.ServerName)
+		return listAccessKeys(ctx, store, cmd.List.ServerName, out)
 	case cmd.Create != nil:
-		return configManager.CreateAccessKey(cmd.Create.ServerName, cmd.Create.Name, cmd.Create.Method.Method, cmd.Create.Port.Number, cmd.Create.DataLimit.String())
+		return createAccessKey(ctx, store, cmd.Create, out)
 	case cmd.Delete != nil:
-		if cmd.Delete.KeyName != "" {
-			return configManager.DeleteAccessKeyByName(cmd.Delete.ServerName, cmd.Delete.KeyName)
-		}
-		return configManager.DeleteAccessKey(cmd.Delete.ServerName, cmd.Delete.KeyID)
+		return deleteAccessKey(ctx, store, cmd.Delete)
 	case cmd.Edit != nil:
-		return configManager.EditAccessKey(cmd.Edit.ServerName, cmd.Edit.KeyID, cmd.Edit.KeyName, cmd.Edit.NewName, cmd.Edit.DataLimit.String(), cmd.Edit.RemoveLimit)
+		return editAccessKey(ctx, store, cmd.Edit, out)
 	default:
-		return fmt.Errorf("no keys subcommand specified")
+		return errors.New("no keys subcommand specified")
 	}
+}
+
+func listServers(store *config.Store, out io.Writer) error {
+	if len(store.Servers) == 0 {
+		slog.Debug("no servers configured")
+		return nil
+	}
+
+	_, _ = fmt.Fprintln(out, "Configured servers:")
+	_, _ = fmt.Fprintln(out, "===================")
+	for _, name := range slices.Sorted(maps.Keys(store.Servers)) {
+		srv := store.Servers[name]
+		_, _ = fmt.Fprintf(out, "Name: %s\n", name)
+		_, _ = fmt.Fprintf(out, "URL:  %s\n", srv.URL)
+		_, _ = fmt.Fprintf(out, "Cert: %s\n", srv.CertSha256)
+		_, _ = fmt.Fprintln(out, "---")
+	}
+	return nil
+}
+
+func getServer(ctx context.Context, store *config.Store, name string, out io.Writer) error {
+	srv, err := store.Get(name)
+	if err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(out, "Server: %s\n", name)
+	_, _ = fmt.Fprintf(out, "URL:   %s\n", srv.URL)
+	if srv.CertSha256 != "" {
+		_, _ = fmt.Fprintf(out, "Cert:  %s\n", srv.CertSha256)
+	}
+
+	client := api.NewClient(srv.URL, srv.CertSha256)
+	serverInfo, err := client.GetServerInfo(ctx)
+	if err != nil {
+		slog.Warn("failed to get server info from API", slog.Any("error", err))
+		return nil
+	}
+
+	_, _ = fmt.Fprintln(out, "API Info:")
+	_, _ = fmt.Fprintf(out, "  Name:                    %s\n", serverInfo.Name)
+	_, _ = fmt.Fprintf(out, "  Server ID:               %s\n", serverInfo.ServerID)
+	_, _ = fmt.Fprintf(out, "  Version:                 %s\n", serverInfo.Version)
+	_, _ = fmt.Fprintf(out, "  Metrics Enabled:         %t\n", serverInfo.MetricsEnabled)
+	_, _ = fmt.Fprintf(out, "  Port for New Keys:       %d\n", serverInfo.PortForNewAccessKeys)
+	_, _ = fmt.Fprintf(out, "  Hostname for Keys:       %s\n", serverInfo.HostnameForAccessKeys)
+	if serverInfo.AccessKeyDataLimit != nil {
+		_, _ = fmt.Fprintf(out, "  Access Key Data Limit:   %d bytes\n", serverInfo.AccessKeyDataLimit.Bytes)
+	}
+	return nil
+}
+
+func getMetrics(ctx context.Context, store *config.Store, serverName string, out io.Writer) error {
+	srv, err := store.Get(serverName)
+	if err != nil {
+		return err
+	}
+
+	client := api.NewClient(srv.URL, srv.CertSha256)
+	metrics, err := client.GetTransferMetrics(ctx)
+	if err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(out, "Transfer metrics for server '%s':\n", serverName)
+	_, _ = fmt.Fprintln(out, "==================================")
+	if len(metrics.BytesTransferredByUserID) == 0 {
+		slog.Debug("no transfer data available", slog.String("server", serverName))
+		return nil
+	}
+
+	for _, userID := range slices.Sorted(maps.Keys(metrics.BytesTransferredByUserID)) {
+		bytes := metrics.BytesTransferredByUserID[userID]
+		_, _ = fmt.Fprintf(out, "User %s: %s\n", userID, humanize.Bytes(uint64(max(bytes, 0))))
+	}
+	return nil
+}
+
+func listAccessKeys(ctx context.Context, store *config.Store, serverName string, out io.Writer) error {
+	srv, err := store.Get(serverName)
+	if err != nil {
+		return err
+	}
+
+	client := api.NewClient(srv.URL, srv.CertSha256)
+	accessKeys, err := client.ListAccessKeys(ctx)
+	if err != nil {
+		return err
+	}
+
+	if len(accessKeys) == 0 {
+		slog.Debug("no access keys found on server", slog.String("server", serverName))
+		return nil
+	}
+
+	_, _ = fmt.Fprintf(out, "Access keys for server '%s':\n", serverName)
+	_, _ = fmt.Fprintln(out, "==================================")
+	for _, key := range accessKeys {
+		_, _ = fmt.Fprintf(out, "ID:       %s\n", key.ID)
+		_, _ = fmt.Fprintf(out, "Name:     %s\n", key.Name)
+		_, _ = fmt.Fprintf(out, "Port:     %d\n", key.Port)
+		_, _ = fmt.Fprintf(out, "Method:   %s\n", key.Method)
+		_, _ = fmt.Fprintf(out, "Access URL: %s\n", key.AccessURL)
+		if key.DataLimit != nil {
+			_, _ = fmt.Fprintf(out, "Data Limit: %s\n", humanize.Bytes(uint64(max(key.DataLimit.Bytes, 0))))
+		}
+		_, _ = fmt.Fprintln(out, "---")
+	}
+	return nil
+}
+
+func createAccessKey(ctx context.Context, store *config.Store, cmd *CreateKeyCmd, out io.Writer) error {
+	srv, err := store.Get(cmd.ServerName)
+	if err != nil {
+		return err
+	}
+
+	req := api.CreateAccessKeyRequest{
+		Name:   cmd.Name,
+		Method: string(cmd.Method),
+		Port:   int(cmd.Port),
+	}
+	if cmd.DataLimit > 0 {
+		req.Limit = &api.DataLimit{Bytes: int64(cmd.DataLimit)}
+	}
+
+	client := api.NewClient(srv.URL, srv.CertSha256)
+	accessKey, err := client.CreateAccessKey(ctx, req)
+	if err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintln(out, "Access key created successfully!")
+	_, _ = fmt.Fprintf(out, "ID:         %s\n", accessKey.ID)
+	_, _ = fmt.Fprintf(out, "Name:       %s\n", accessKey.Name)
+	_, _ = fmt.Fprintf(out, "Password:   %s\n", accessKey.Password)
+	_, _ = fmt.Fprintf(out, "Port:       %d\n", accessKey.Port)
+	_, _ = fmt.Fprintf(out, "Method:     %s\n", accessKey.Method)
+	_, _ = fmt.Fprintf(out, "Access URL: %s\n", accessKey.AccessURL)
+	if accessKey.DataLimit != nil {
+		_, _ = fmt.Fprintf(out, "Data Limit: %s\n", humanize.Bytes(uint64(max(accessKey.DataLimit.Bytes, 0))))
+	}
+	return nil
+}
+
+func deleteAccessKey(ctx context.Context, store *config.Store, cmd *DeleteKeyCmd) error {
+	srv, err := store.Get(cmd.ServerName)
+	if err != nil {
+		return err
+	}
+
+	client := api.NewClient(srv.URL, srv.CertSha256)
+	keyID, err := resolveKeyID(ctx, client, cmd.ServerName, cmd.KeyID, cmd.KeyName)
+	if err != nil {
+		return err
+	}
+
+	return client.DeleteAccessKey(ctx, keyID)
+}
+
+func editAccessKey(ctx context.Context, store *config.Store, cmd *EditKeyCmd, out io.Writer) error {
+	srv, err := store.Get(cmd.ServerName)
+	if err != nil {
+		return err
+	}
+
+	client := api.NewClient(srv.URL, srv.CertSha256)
+	keyID, err := resolveKeyID(ctx, client, cmd.ServerName, cmd.KeyID, cmd.KeyName)
+	if err != nil {
+		return err
+	}
+
+	if cmd.NewName != "" {
+		if err := client.RenameAccessKey(ctx, keyID, cmd.NewName); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(out, "Access key renamed successfully to: %s\n", cmd.NewName)
+	}
+
+	if cmd.RemoveLimit {
+		if err := client.RemoveAccessKeyDataLimit(ctx, keyID); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintln(out, "Data limit removed successfully")
+	} else if cmd.DataLimit > 0 {
+		limit := api.DataLimit{Bytes: int64(cmd.DataLimit)}
+		if err := client.SetAccessKeyDataLimit(ctx, keyID, limit); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(out, "Data limit updated successfully to: %s\n", cmd.DataLimit.String())
+	}
+
+	return nil
+}
+
+func resolveKeyID(ctx context.Context, client *api.Client, serverName, keyID, keyName string) (string, error) {
+	if keyName != "" {
+		keys, err := client.ListAccessKeys(ctx)
+		if err != nil {
+			return "", err
+		}
+		for _, k := range keys {
+			if k.Name == keyName {
+				return k.ID, nil
+			}
+		}
+		return "", fmt.Errorf("access key with name %q not found on server %q", keyName, serverName)
+	}
+	if keyID == "" {
+		return "", errors.New("either --key-id or --key-name must be specified")
+	}
+	return keyID, nil
+}
+
+func newLogger(levelStr string) *slog.Logger {
+	var level slog.Level
+	switch strings.ToLower(strings.TrimSpace(levelStr)) {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn", "warning":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 }

@@ -1,11 +1,10 @@
 module github.com/art-shutter/outline-cli
 
-go 1.24.4
+go 1.26
 
 require (
 	github.com/alexflint/go-arg v1.6.1
-	github.com/dustin/go-humanize v1.0.1
-	github.com/goccy/go-json v0.10.5
+	github.com/dustin/go-humanize v1.1.0
 	github.com/goccy/go-yaml v1.19.2
 )
 

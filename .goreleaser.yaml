@@ -1,0 +1,36 @@
+version: 2
+
+project_name: outline-cli
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: outline-cli
+    main: ./cmd/outline-cli
+    binary: outline-cli
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.Version={{ .Version }}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: binary
+    formats:
+      - binary
+    name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  mode: keep-existing

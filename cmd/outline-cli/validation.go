@@ -1,31 +1,38 @@
 package main
 
 import (
-	"encoding/hex"
+	"errors"
 	"fmt"
-	"log/slog"
-	"net/url"
 	"strconv"
 	"strings"
 
+	"github.com/art-shutter/outline-cli/internal/config"
 	"github.com/dustin/go-humanize"
 )
 
 func validateArgs(args *Args) error {
+	if args.Servers != nil && args.Servers.Update != nil {
+		if args.Servers.Update.URL == "" {
+			return errors.New("--url must be specified for update operation")
+		}
+	}
+
 	if args.Keys != nil {
 		if args.Keys.Delete != nil {
 			if args.Keys.Delete.KeyID == "" && args.Keys.Delete.KeyName == "" {
-				return fmt.Errorf("either --key-id or --key-name must be specified for delete operation")
+				return errors.New("either --key-id or --key-name must be specified for delete operation")
 			}
 		}
 
 		if args.Keys.Edit != nil {
 			if args.Keys.Edit.KeyID == "" && args.Keys.Edit.KeyName == "" {
-				return fmt.Errorf("either --key-id or --key-name must be specified for edit operation")
+				return errors.New("either --key-id or --key-name must be specified for edit operation")
 			}
-
-			if args.Keys.Edit.NewName == "" && args.Keys.Edit.DataLimit.String() == "" && !args.Keys.Edit.RemoveLimit {
-				return fmt.Errorf("at least one of --new-name, --data-limit, or --remove-limit must be specified for edit operation")
+			if args.Keys.Edit.NewName == "" && args.Keys.Edit.DataLimit == 0 && !args.Keys.Edit.RemoveLimit {
+				return errors.New("at least one of --new-name, --data-limit, or --remove-limit must be specified for edit operation")
+			}
+			if args.Keys.Edit.DataLimit > 0 && args.Keys.Edit.RemoveLimit {
+				return errors.New("--data-limit and --remove-limit cannot be used together")
 			}
 		}
 	}
@@ -33,198 +40,138 @@ func validateArgs(args *Args) error {
 	return nil
 }
 
-type DataSize struct {
-	Bytes int64
-}
+// DataSize represents a byte count parsed from a human-readable size flag (e.g. "1GB", "500MB").
+type DataSize int64
 
 func (d *DataSize) UnmarshalText(text []byte) error {
 	if len(text) == 0 {
-		d.Bytes = 0
+		*d = 0
 		return nil
 	}
 
 	sizeStr := strings.TrimSpace(string(text))
-
 	bytes, err := humanize.ParseBytes(sizeStr)
 	if err != nil {
-		slog.Error("invalid data size format", "error", err, "size", sizeStr, "expected", "like 1GB, 500MB, 2TB", "got", sizeStr)
-		return fmt.Errorf("invalid data size format. Expected format like '1GB', '500MB', '2TB'. Got: %s", sizeStr)
+		return fmt.Errorf("invalid data size format (expected format like '1GB', '500MB', '2TB', got %q)", sizeStr)
 	}
 
-	d.Bytes = int64(bytes)
+	*d = DataSize(bytes)
 	return nil
 }
 
 func (d DataSize) MarshalText() ([]byte, error) {
-	if d.Bytes == 0 {
+	if d <= 0 {
 		return []byte(""), nil
 	}
-	return []byte(humanize.Bytes(uint64(d.Bytes))), nil
+	return []byte(humanize.Bytes(uint64(d))), nil
 }
 
 func (d DataSize) String() string {
-	if d.Bytes == 0 {
+	if d <= 0 {
 		return ""
 	}
-	return humanize.Bytes(uint64(d.Bytes))
+	return humanize.Bytes(uint64(d))
 }
 
-type ServerURL struct {
-	URL string
-}
+// ServerURL represents a validated Outline management API URL.
+type ServerURL string
 
 func (s *ServerURL) UnmarshalText(text []byte) error {
-	if len(text) == 0 {
-		slog.Error("URL cannot be empty")
-		return fmt.Errorf("URL cannot be empty")
-	}
-
-	urlStr := strings.TrimSpace(string(text))
-
-	parsedURL, err := url.Parse(urlStr)
+	clean, err := config.ValidateServerURL(string(text))
 	if err != nil {
-		slog.Error("invalid URL format", "error", err, "url", urlStr)
-		return fmt.Errorf("invalid URL format: %v", err)
+		return err
 	}
-
-	if parsedURL.Scheme == "" {
-		slog.Error("URL must include a scheme (e.g., https://)")
-		return fmt.Errorf("URL must include a scheme (e.g., https://)")
-	}
-
-	if parsedURL.Host == "" {
-		slog.Error("URL must include a host")
-		return fmt.Errorf("URL must include a host")
-	}
-
-	s.URL = urlStr
+	*s = ServerURL(clean)
 	return nil
 }
 
 func (s ServerURL) MarshalText() ([]byte, error) {
-	return []byte(s.URL), nil
+	return []byte(s), nil
 }
 
 func (s ServerURL) String() string {
-	return s.URL
+	return string(s)
 }
 
-type CertSHA256 struct {
-	Hash string
-}
+// CertSHA256 represents a validated hex-encoded certificate SHA-256 fingerprint.
+type CertSHA256 string
 
 func (c *CertSHA256) UnmarshalText(text []byte) error {
-	if len(text) == 0 {
-		return fmt.Errorf("certificate SHA256 cannot be empty")
-	}
-
-	hash := strings.TrimSpace(string(text))
-
-	_, err := hex.DecodeString(hash)
+	clean, err := config.ValidateCertSHA256(string(text))
 	if err != nil {
-		slog.Error("invalid SHA256 hash format", "error", err, "hash", hash)
-		return fmt.Errorf("invalid SHA256 hash format: %v", err)
+		return err
 	}
-
-	c.Hash = hash
+	*c = CertSHA256(clean)
 	return nil
 }
 
 func (c CertSHA256) MarshalText() ([]byte, error) {
-	return []byte(c.Hash), nil
+	return []byte(c), nil
 }
 
 func (c CertSHA256) String() string {
-	return c.Hash
+	return string(c)
 }
 
-type Port struct {
-	Number int
-}
+// Port represents a validated TCP/UDP port number in [1, 65535].
+type Port int
 
 func (p *Port) UnmarshalText(text []byte) error {
 	if len(text) == 0 {
-		slog.Error("port cannot be empty")
-		return fmt.Errorf("port cannot be empty")
+		return errors.New("port cannot be empty")
 	}
 
 	portStr := strings.TrimSpace(string(text))
-
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
-		slog.Error("invalid port number", "error", err, "port", portStr)
-		return fmt.Errorf("invalid port number: %v", err)
+		return fmt.Errorf("invalid port number: %w", err)
 	}
-
 	if port < 1 || port > 65535 {
-		slog.Error("port must be between 1 and 65535", "port", port)
 		return fmt.Errorf("port must be between 1 and 65535, got: %d", port)
 	}
 
-	p.Number = port
+	*p = Port(port)
 	return nil
 }
 
 func (p Port) MarshalText() ([]byte, error) {
-	return []byte(strconv.Itoa(p.Number)), nil
+	return []byte(strconv.Itoa(int(p))), nil
 }
 
 func (p Port) String() string {
-	return strconv.Itoa(p.Number)
+	return strconv.Itoa(int(p))
 }
 
-type EncryptionMethod struct {
-	Method string
-}
+// EncryptionMethod represents a supported Shadowsocks AEAD cipher.
+type EncryptionMethod string
 
-var validEncryptionMethods = map[string]bool{
-	"aes-256-gcm":       true,
-	"aes-192-gcm":       true,
-	"aes-128-gcm":       true,
-	"chacha20-poly1305": true,
-}
+const (
+	MethodAES256GCM        EncryptionMethod = "aes-256-gcm"
+	MethodAES192GCM        EncryptionMethod = "aes-192-gcm"
+	MethodAES128GCM        EncryptionMethod = "aes-128-gcm"
+	MethodChaCha20Poly1305 EncryptionMethod = "chacha20-poly1305"
+)
 
 func (e *EncryptionMethod) UnmarshalText(text []byte) error {
 	if len(text) == 0 {
-		e.Method = "aes-192-gcm"
+		*e = MethodAES192GCM
 		return nil
 	}
 
-	method := strings.TrimSpace(string(text))
-
-	if !validEncryptionMethods[method] {
-		validMethods := make([]string, 0, len(validEncryptionMethods))
-		for m := range validEncryptionMethods {
-			validMethods = append(validMethods, m)
-		}
-		slog.Error("invalid encryption method", "method", method, "valid_methods", strings.Join(validMethods, ", "))
-		return fmt.Errorf("invalid encryption method. Valid methods are: %s", strings.Join(validMethods, ", "))
+	method := EncryptionMethod(strings.TrimSpace(string(text)))
+	switch method {
+	case MethodAES256GCM, MethodAES192GCM, MethodAES128GCM, MethodChaCha20Poly1305:
+		*e = method
+		return nil
+	default:
+		return fmt.Errorf("invalid encryption method %q (valid: aes-256-gcm, aes-192-gcm, aes-128-gcm, chacha20-poly1305)", method)
 	}
-
-	e.Method = method
-	return nil
 }
 
 func (e EncryptionMethod) MarshalText() ([]byte, error) {
-	return []byte(e.Method), nil
+	return []byte(e), nil
 }
 
 func (e EncryptionMethod) String() string {
-	return e.Method
-}
-
-func ParseDataSize(sizeStr string) (int64, error) {
-	if sizeStr == "" {
-		return 0, nil
-	}
-
-	sizeStr = strings.TrimSpace(sizeStr)
-
-	bytes, err := humanize.ParseBytes(sizeStr)
-	if err != nil {
-		slog.Error("invalid data size format", "error", err, "size", sizeStr, "expected", "like 1GB, 500MB, 2TB", "got", sizeStr)
-		return 0, fmt.Errorf("invalid data size format. Expected format like '1GB', '500MB', '2TB'. Got: %s", sizeStr)
-	}
-
-	return int64(bytes), nil
+	return string(e)
 }

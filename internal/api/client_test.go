@@ -1,31 +1,36 @@
 package api
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
-func TestNewAPIClient(t *testing.T) {
+func TestNewClient(t *testing.T) {
 	certSha256 := "1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF"
-	client := NewAPIClient(certSha256)
+	client := NewClient("https://example.com/secret/", certSha256)
 
 	if client == nil {
-		t.Fatal("NewAPIClient returned nil")
+		t.Fatal("NewClient returned nil")
 	}
-
-	if client.client == nil {
-		t.Fatal("HTTP client is nil")
+	if client.baseURL != "https://example.com/secret" {
+		t.Errorf("baseURL = %q, want %q", client.baseURL, "https://example.com/secret")
 	}
-
-	if client.client.Timeout != 30*1000000000 { // 30 seconds in nanoseconds
-		t.Errorf("Expected timeout 30s, got %v", client.client.Timeout)
+	if client.httpClient == nil {
+		t.Fatal("httpClient is nil")
+	}
+	if client.httpClient.Timeout != 30*time.Second {
+		t.Errorf("Timeout = %v, want 30s", client.httpClient.Timeout)
 	}
 }
 
 func TestGetServerInfo(t *testing.T) {
-	// Create a test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/server" {
 			t.Errorf("Expected path /server, got %s", r.URL.Path)
@@ -41,13 +46,12 @@ func TestGetServerInfo(t *testing.T) {
 			HostnameForAccessKeys: "test.example.com",
 		}
 
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
-	client := NewAPIClient("dummy-cert-sha256")
-	serverInfo, err := client.GetServerInfo(server.URL)
-
+	client := NewClient(server.URL, "dummy-cert-sha256")
+	serverInfo, err := client.GetServerInfo(context.Background())
 	if err != nil {
 		t.Fatalf("GetServerInfo failed: %v", err)
 	}
@@ -55,14 +59,61 @@ func TestGetServerInfo(t *testing.T) {
 	if serverInfo.Name != "Test Server" {
 		t.Errorf("Expected server name 'Test Server', got %s", serverInfo.Name)
 	}
-
 	if serverInfo.ServerID != "test-server-id" {
 		t.Errorf("Expected server ID 'test-server-id', got %s", serverInfo.ServerID)
 	}
-
 	if !serverInfo.MetricsEnabled {
 		t.Error("Expected metrics to be enabled")
 	}
+}
+
+func TestGetServerInfo_ErrorOnNon200Status(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "dummy-cert-sha256")
+	_, err := client.GetServerInfo(context.Background())
+	if err == nil {
+		t.Fatal("expected error on HTTP 403, got nil")
+	}
+	if !strings.Contains(err.Error(), "403") {
+		t.Errorf("expected error to mention status 403, got: %v", err)
+	}
+}
+
+func TestTLSCertPinning(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(OutlineServer{Name: "Pinned TLS Server"})
+	}))
+	defer server.Close()
+
+	cert := server.Certificate()
+	sum := sha256.Sum256(cert.Raw)
+	validHash := hex.EncodeToString(sum[:])
+
+	t.Run("matching fingerprint succeeds", func(t *testing.T) {
+		client := NewClient(server.URL, validHash)
+		info, err := client.GetServerInfo(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if info.Name != "Pinned TLS Server" {
+			t.Errorf("Name = %q, want %q", info.Name, "Pinned TLS Server")
+		}
+	})
+
+	t.Run("mismatched fingerprint fails", func(t *testing.T) {
+		client := NewClient(server.URL, "0000000000000000000000000000000000000000000000000000000000000000")
+		_, err := client.GetServerInfo(context.Background())
+		if err == nil {
+			t.Fatal("expected certificate mismatch error, got nil")
+		}
+		if !strings.Contains(err.Error(), "certificate SHA256 mismatch") {
+			t.Errorf("expected certificate mismatch error, got: %v", err)
+		}
+	})
 }
 
 func TestListAccessKeys(t *testing.T) {
@@ -92,25 +143,22 @@ func TestListAccessKeys(t *testing.T) {
 			},
 		}
 
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
-	client := NewAPIClient("dummy-cert-sha256")
-	keys, err := client.ListAccessKeys(server.URL)
-
+	client := NewClient(server.URL, "dummy-cert-sha256")
+	keys, err := client.ListAccessKeys(context.Background())
 	if err != nil {
 		t.Fatalf("ListAccessKeys failed: %v", err)
 	}
 
 	if len(keys) != 2 {
-		t.Errorf("Expected 2 keys, got %d", len(keys))
+		t.Fatalf("Expected 2 keys, got %d", len(keys))
 	}
-
 	if keys[0].ID != "key1" {
 		t.Errorf("Expected first key ID 'key1', got %s", keys[0].ID)
 	}
-
 	if keys[1].Name != "Test Key 2" {
 		t.Errorf("Expected second key name 'Test Key 2', got %s", keys[1].Name)
 	}
@@ -121,22 +169,18 @@ func TestCreateAccessKey(t *testing.T) {
 		if r.URL.Path != "/access-keys" {
 			t.Errorf("Expected path /access-keys, got %s", r.URL.Path)
 		}
-
-		if r.Method != "POST" {
+		if r.Method != http.MethodPost {
 			t.Errorf("Expected POST method, got %s", r.Method)
 		}
 
-		// Parse the request body
 		var req CreateAccessKeyRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("Failed to decode request body: %v", err)
 		}
 
-		// Verify request fields
 		if req.Name != "Test Key" {
 			t.Errorf("Expected name 'Test Key', got %s", req.Name)
 		}
-
 		if req.Method != "aes-256-gcm" {
 			t.Errorf("Expected method 'aes-256-gcm', got %s", req.Method)
 		}
@@ -151,19 +195,16 @@ func TestCreateAccessKey(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
-	client := NewAPIClient("dummy-cert-sha256")
-	req := CreateAccessKeyRequest{
+	client := NewClient(server.URL, "dummy-cert-sha256")
+	key, err := client.CreateAccessKey(context.Background(), CreateAccessKeyRequest{
 		Name:   "Test Key",
 		Method: "aes-256-gcm",
 		Port:   12345,
-	}
-
-	key, err := client.CreateAccessKey(server.URL, req)
-
+	})
 	if err != nil {
 		t.Fatalf("CreateAccessKey failed: %v", err)
 	}
@@ -171,7 +212,6 @@ func TestCreateAccessKey(t *testing.T) {
 	if key.ID != "new-key-id" {
 		t.Errorf("Expected key ID 'new-key-id', got %s", key.ID)
 	}
-
 	if key.Name != "Test Key" {
 		t.Errorf("Expected key name 'Test Key', got %s", key.Name)
 	}
@@ -182,8 +222,7 @@ func TestDeleteAccessKey(t *testing.T) {
 		if r.URL.Path != "/access-keys/key123" {
 			t.Errorf("Expected path /access-keys/key123, got %s", r.URL.Path)
 		}
-
-		if r.Method != "DELETE" {
+		if r.Method != http.MethodDelete {
 			t.Errorf("Expected DELETE method, got %s", r.Method)
 		}
 
@@ -191,11 +230,52 @@ func TestDeleteAccessKey(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewAPIClient("dummy-cert-sha256")
-	err := client.DeleteAccessKey(server.URL, "key123")
-
-	if err != nil {
+	client := NewClient(server.URL, "dummy-cert-sha256")
+	if err := client.DeleteAccessKey(context.Background(), "key123"); err != nil {
 		t.Fatalf("DeleteAccessKey failed: %v", err)
+	}
+}
+
+func TestRenameAndSetDataLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/access-keys/key123/name":
+			if r.Method != http.MethodPut {
+				t.Errorf("Expected PUT method, got %s", r.Method)
+			}
+			var body renameAccessKeyRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode rename body: %v", err)
+			}
+			if body.Name != "Renamed Key" {
+				t.Errorf("Name = %q, want %q", body.Name, "Renamed Key")
+			}
+			w.WriteHeader(http.StatusNoContent)
+		case "/access-keys/key123/data-limit":
+			if r.Method != http.MethodPut {
+				t.Errorf("Expected PUT method, got %s", r.Method)
+			}
+			var body setDataLimitRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode limit body: %v", err)
+			}
+			if body.Limit.Bytes != 1000000000 {
+				t.Errorf("Limit.Bytes = %d, want %d", body.Limit.Bytes, 1000000000)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("Unexpected path: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "dummy-cert-sha256")
+	if err := client.RenameAccessKey(context.Background(), "key123", "Renamed Key"); err != nil {
+		t.Fatalf("RenameAccessKey failed: %v", err)
+	}
+	if err := client.SetAccessKeyDataLimit(context.Background(), "key123", DataLimit{Bytes: 1000000000}); err != nil {
+		t.Fatalf("SetAccessKeyDataLimit failed: %v", err)
 	}
 }
 
@@ -206,29 +286,27 @@ func TestGetTransferMetrics(t *testing.T) {
 		}
 
 		response := TransferMetrics{
-			BytesTransferredByUserId: map[string]int64{
-				"user1": 1024 * 1024, // 1MB
-				"user2": 2048 * 1024, // 2MB
+			BytesTransferredByUserID: map[string]int64{
+				"user1": 1024 * 1024,
+				"user2": 2048 * 1024,
 			},
 		}
 
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
-	client := NewAPIClient("dummy-cert-sha256")
-	metrics, err := client.GetTransferMetrics(server.URL)
-
+	client := NewClient(server.URL, "dummy-cert-sha256")
+	metrics, err := client.GetTransferMetrics(context.Background())
 	if err != nil {
 		t.Fatalf("GetTransferMetrics failed: %v", err)
 	}
 
-	if len(metrics.BytesTransferredByUserId) != 2 {
-		t.Errorf("Expected 2 users, got %d", len(metrics.BytesTransferredByUserId))
+	if len(metrics.BytesTransferredByUserID) != 2 {
+		t.Errorf("Expected 2 users, got %d", len(metrics.BytesTransferredByUserID))
 	}
-
-	if metrics.BytesTransferredByUserId["user1"] != 1024*1024 {
-		t.Errorf("Expected user1 to have 1MB transferred, got %d", metrics.BytesTransferredByUserId["user1"])
+	if metrics.BytesTransferredByUserID["user1"] != 1024*1024 {
+		t.Errorf("Expected user1 to have 1MB transferred, got %d", metrics.BytesTransferredByUserID["user1"])
 	}
 }
 
@@ -237,8 +315,7 @@ func TestRemoveAccessKeyDataLimit(t *testing.T) {
 		if r.URL.Path != "/access-keys/key123/data-limit" {
 			t.Errorf("Expected path /access-keys/key123/data-limit, got %s", r.URL.Path)
 		}
-
-		if r.Method != "DELETE" {
+		if r.Method != http.MethodDelete {
 			t.Errorf("Expected DELETE method, got %s", r.Method)
 		}
 
@@ -246,10 +323,8 @@ func TestRemoveAccessKeyDataLimit(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewAPIClient("dummy-cert-sha256")
-	err := client.RemoveAccessKeyDataLimit(server.URL, "key123")
-
-	if err != nil {
+	client := NewClient(server.URL, "dummy-cert-sha256")
+	if err := client.RemoveAccessKeyDataLimit(context.Background(), "key123"); err != nil {
 		t.Fatalf("RemoveAccessKeyDataLimit failed: %v", err)
 	}
 }
