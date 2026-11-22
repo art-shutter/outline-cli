@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/art-shutter/outline-cli/compare/v1.1.0...v1.1.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **release:** enforce vX.Y.Z tag format and support manual tag asset dispatch ([71f202b](https://github.com/art-shutter/outline-cli/commit/71f202bba8fd6f3be5c7636103865e93220a4c2e))
+
 ## [1.1.0](https://github.com/art-shutter/outline-cli/compare/outline-cli-v1.0.0...outline-cli-v1.1.0) (2026-11-22)
 
 
