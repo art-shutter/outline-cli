@@ -31,8 +31,9 @@ jobs:
       - name: 'Setup Bun'
         uses: 'oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6' # v2.2.0
         with:
-          bun-version: 'latest'
+          node-version: lts/*
       - name: 'Release'
+        env:
+          GH_TOKEN: '${{ secrets.SEMANTIC_RELEASE_TOKEN }}'
         run: |
-            bun -e "const config = $(cat .releaserc.json); const plugins = config.plugins.map(p => Array.isArray(p) ? p[0] : p); console.log(plugins.join(' '))" | xargs bun install
-            GH_TOKEN=${{ secrets.SEMANTIC_RELEASE_TOKEN }} bunx semantic-release
+            npx semantic-release
